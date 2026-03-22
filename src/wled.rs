@@ -9,6 +9,7 @@ use std::time::Duration;
 // ── Info response ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct WledInfo {
     pub ver:      String,
     pub name:     String,
@@ -21,6 +22,7 @@ pub struct WledInfo {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct LedInfo {
     pub count: u32,
     #[serde(default)]
@@ -44,6 +46,7 @@ pub struct WledState {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct Segment {
     #[serde(default)]
     pub id:  u32,
@@ -120,6 +123,7 @@ impl WledClient {
         anyhow::bail!("WLED {status}: {text}");
     }
 
+    #[allow(dead_code)]
     pub async fn get_effect_names(&self) -> Result<Vec<String>> {
         self.http
             .get(format!("{}/json/eff", self.base))
