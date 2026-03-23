@@ -12,7 +12,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{debug, info, warn};
 
 use crate::config::{DeviceConfig, WledConfig};
-use crate::homecore::HomecorePublisher;
+use crate::homecore::{AttributeKind, AttributeSchema, DeviceSchema, HomecorePublisher};
 use crate::wled::{WledClient, WledState};
 
 pub struct Bridge {
@@ -103,6 +103,8 @@ async fn startup_device(
             if let Err(e) = publisher.register_device(&dev.hc_id, &dev.name, dev.area.as_deref()).await {
                 warn!(hc_id = %dev.hc_id, error = %e, "Registration failed");
             }
+            // Publish capability schema for the UI.
+            publisher.publish_device_schema(&dev.hc_id, &build_wled_schema()).await.ok();
             let _ = publisher.publish_availability(&dev.hc_id, true).await;
             if let Ok(state) = client.get_state().await {
                 let _ = publisher.publish_state(&dev.hc_id, &state_to_json(&state)).await;
@@ -112,6 +114,7 @@ async fn startup_device(
         Err(e) => {
             warn!(hc_id = %dev.hc_id, host = %dev.host, error = %e, "WLED unreachable at startup");
             let _ = publisher.register_device(&dev.hc_id, &dev.name, dev.area.as_deref()).await;
+            publisher.publish_device_schema(&dev.hc_id, &build_wled_schema()).await.ok();
             let _ = publisher.publish_availability(&dev.hc_id, false).await;
             false
         }
@@ -254,6 +257,33 @@ async fn execute_command(client: &WledClient, cmd: &Value) -> Result<()> {
     }
 
     client.post_state(&Value::Object(body)).await
+}
+
+fn build_wled_schema() -> DeviceSchema {
+    let mut attrs = HashMap::new();
+    attrs.insert("on".into(), AttributeSchema {
+        kind: AttributeKind::Bool,
+        writable: true,
+        display_name: Some("Power".into()),
+        unit: None, min: None, max: None, step: None, options: None,
+    });
+    attrs.insert("brightness_pct".into(), AttributeSchema {
+        kind: AttributeKind::Integer,
+        writable: true,
+        display_name: Some("Brightness".into()),
+        unit: Some("%".into()),
+        min: Some(0.0), max: Some(100.0), step: Some(1.0),
+        options: None,
+    });
+    attrs.insert("preset".into(), AttributeSchema {
+        kind: AttributeKind::Integer,
+        writable: true,
+        display_name: Some("Preset".into()),
+        unit: None,
+        min: Some(1.0), max: Some(250.0), step: Some(1.0),
+        options: None,
+    });
+    DeviceSchema { attributes: attrs }
 }
 
 pub fn state_to_json(state: &WledState) -> Value {
