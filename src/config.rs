@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
+use crate::logging::LoggingConfig;
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct WledConfig {
     pub homecore: HomecoreConfig,
@@ -8,6 +10,8 @@ pub struct WledConfig {
     pub wled: WledGlobalConfig,
     #[serde(default)]
     pub devices: Vec<DeviceConfig>,
+    #[serde(default)]
+    pub logging: LoggingConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]

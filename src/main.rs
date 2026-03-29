@@ -1,13 +1,13 @@
 mod bridge;
 mod config;
 mod homecore;
+mod logging;
 mod wled;
 
 use anyhow::Result;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{error, info};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
 use config::WledConfig;
 
@@ -48,35 +48,16 @@ async fn main() {
 }
 
 fn init_logging(config_path: &str) -> tracing_appender::non_blocking::WorkerGuard {
-    let log_dir = std::path::Path::new(config_path)
-        .parent()
-        .and_then(|p| p.parent())
-        .map(|p| p.join("logs"))
-        .unwrap_or_else(|| std::path::PathBuf::from("logs"));
-    std::fs::create_dir_all(&log_dir).ok();
-
-    let file_appender = tracing_appender::rolling::daily(&log_dir, "hc-wled.log");
-    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
-
-    let stderr_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "hc_wled=info".parse().unwrap());
-    let file_filter   = EnvFilter::new("debug");
-
-    let stderr_layer = tracing_subscriber::fmt::layer()
-        .with_writer(std::io::stderr)
-        .with_filter(stderr_filter);
-
-    let file_layer = tracing_subscriber::fmt::layer()
-        .with_writer(non_blocking)
-        .with_ansi(false)
-        .with_filter(file_filter);
-
-    tracing_subscriber::registry()
-        .with(stderr_layer)
-        .with(file_layer)
-        .init();
-
-    guard
+    #[derive(serde::Deserialize, Default)]
+    struct Bootstrap {
+        #[serde(default)]
+        logging: logging::LoggingConfig,
+    }
+    let bootstrap: Bootstrap = std::fs::read_to_string(config_path)
+        .ok()
+        .and_then(|s| toml::from_str(&s).ok())
+        .unwrap_or_default();
+    logging::init_logging(config_path, "hc-wled", "hc_wled=info", &bootstrap.logging)
 }
 
 async fn try_start(cfg: &WledConfig) -> Result<()> {
