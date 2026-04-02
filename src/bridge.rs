@@ -69,7 +69,10 @@ impl Bridge {
                         // Re-fetch and publish updated state
                         if let Ok(state) = client.get_state().await {
                             let j = state_to_json(&state);
-                            if let Err(e) = publisher.publish_state(&hc_id2, &j).await {
+                            if let Err(e) = publisher
+                                .publish_state_for_command(&hc_id2, &j, &cmd, "hc-wled")
+                                .await
+                            {
                                 warn!(hc_id = %hc_id2, error = %e, "Failed to publish state");
                             }
                         }
