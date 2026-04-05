@@ -24,7 +24,7 @@ async fn main() {
         .nth(1)
         .unwrap_or_else(|| "config/config.toml".to_string());
 
-    let _log_guard = init_logging(&config_path);
+    let (_log_guard, log_level_handle) = init_logging(&config_path);
 
     let cfg = match WledConfig::load(&config_path) {
         Ok(c)  => c,
@@ -36,7 +36,7 @@ async fn main() {
 
     for attempt in 1..=MAX_ATTEMPTS {
         info!(attempt, max = MAX_ATTEMPTS, "Starting hc-wled plugin");
-        match try_start(&cfg, &config_path).await {
+        match try_start(&cfg, &config_path, log_level_handle.clone()).await {
             Ok(())  => return,
             Err(e)  => {
                 if attempt < MAX_ATTEMPTS {
@@ -51,7 +51,7 @@ async fn main() {
     }
 }
 
-fn init_logging(config_path: &str) -> tracing_appender::non_blocking::WorkerGuard {
+fn init_logging(config_path: &str) -> (tracing_appender::non_blocking::WorkerGuard, hc_logging::LogLevelHandle) {
     #[derive(serde::Deserialize, Default)]
     struct Bootstrap {
         #[serde(default)]
@@ -64,7 +64,7 @@ fn init_logging(config_path: &str) -> tracing_appender::non_blocking::WorkerGuar
     logging::init_logging(config_path, "hc-wled", "hc_wled=info", &bootstrap.logging)
 }
 
-async fn try_start(cfg: &WledConfig, config_path: &str) -> Result<()> {
+async fn try_start(cfg: &WledConfig, config_path: &str, log_level_handle: hc_logging::LogLevelHandle) -> Result<()> {
     let sdk_config = PluginConfig {
         broker_host: cfg.homecore.broker_host.clone(),
         broker_port: cfg.homecore.broker_port,
@@ -82,7 +82,7 @@ async fn try_start(cfg: &WledConfig, config_path: &str) -> Result<()> {
             60,
             Some(env!("CARGO_PKG_VERSION").to_string()),
             Some(config_path.to_string()),
-            None, // no dynamic log level handle yet
+            Some(log_level_handle),
         )
         .await?;
 
