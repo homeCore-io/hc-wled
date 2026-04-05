@@ -106,16 +106,16 @@ async fn try_start(cfg: &WledConfig, config_path: &str, log_level_handle: hc_log
     let schema = build_wled_schema();
     let capabilities = wled_capabilities();
     for dev in &cfg.devices {
-        let mut reg = json!({
-            "device_id":    dev.hc_id,
-            "plugin_id":    cfg.homecore.plugin_id,
-            "name":         dev.name,
-            "capabilities": capabilities,
-        });
-        if let Some(ref a) = dev.area {
-            reg["area"] = serde_json::Value::String(a.clone());
-        }
-        if let Err(e) = client.register_device(&dev.hc_id, &dev.name, capabilities.clone()).await {
+        if let Err(e) = client
+            .register_device_full(
+                &dev.hc_id,
+                &dev.name,
+                None,
+                dev.area.as_deref(),
+                Some(capabilities.clone()),
+            )
+            .await
+        {
             warn!(hc_id = %dev.hc_id, error = %e, "Failed to register device");
         }
         if let Err(e) = client.register_device_schema(&dev.hc_id, &schema).await {
