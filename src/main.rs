@@ -1,14 +1,17 @@
 mod bridge;
 mod config;
-mod homecore;
 mod logging;
 mod wled;
 
 use anyhow::Result;
+use hc_types::schema::{AttributeKind, AttributeSchema, DeviceSchema};
+use plugin_sdk_rs::{PluginClient, PluginConfig};
+use serde_json::json;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use config::WledConfig;
 
@@ -62,31 +65,127 @@ fn init_logging(config_path: &str) -> tracing_appender::non_blocking::WorkerGuar
 }
 
 async fn try_start(cfg: &WledConfig, config_path: &str) -> Result<()> {
-    let hc_client  = homecore::HomecoreClient::connect(&cfg.homecore).await?;
-    let publisher  = hc_client.publisher();
+    let sdk_config = PluginConfig {
+        broker_host: cfg.homecore.broker_host.clone(),
+        broker_port: cfg.homecore.broker_port,
+        plugin_id:   cfg.homecore.plugin_id.clone(),
+        password:    cfg.homecore.password.clone(),
+    };
+
+    let client = PluginClient::connect(sdk_config).await?;
+    let publisher = client.device_publisher();
     let (cmd_tx, cmd_rx) = mpsc::channel(256);
-    let current_ids: Vec<String> = cfg.devices.iter().map(|dev| dev.hc_id.clone()).collect();
+
+    // Enable management protocol (heartbeat + remote config/log commands).
+    let mgmt = client
+        .enable_management(
+            60,
+            Some(env!("CARGO_PKG_VERSION").to_string()),
+            Some(config_path.to_string()),
+            None, // no dynamic log level handle yet
+        )
+        .await?;
+
+    // Clean up stale devices from previous config.
+    let current_ids: Vec<String> = cfg.devices.iter().map(|d| d.hc_id.clone()).collect();
     let cache_path = published_ids_cache_path(config_path);
-
-    tokio::spawn(hc_client.run(cmd_tx));
-
     let previous_ids = load_published_ids(&cache_path);
     for stale_id in previous_ids
         .into_iter()
-        .filter(|device_id| !current_ids.iter().any(|current| current == device_id))
+        .filter(|id| !current_ids.contains(id))
     {
-        if let Err(e) = publisher.unregister_device(&stale_id).await {
-            error!(device_id = %stale_id, error = %e, "Failed to unregister stale configured device");
+        if let Err(e) = client.unregister_device(&stale_id).await {
+            error!(device_id = %stale_id, error = %e, "Failed to unregister stale device");
         } else {
             info!(device_id = %stale_id, "Unregistered stale configured device");
         }
     }
-
     save_published_ids(&cache_path, &current_ids)?;
+
+    // Register all devices and subscribe to commands while we still have &PluginClient.
+    let schema = build_wled_schema();
+    let capabilities = wled_capabilities();
+    for dev in &cfg.devices {
+        let mut reg = json!({
+            "device_id":    dev.hc_id,
+            "plugin_id":    cfg.homecore.plugin_id,
+            "name":         dev.name,
+            "capabilities": capabilities,
+        });
+        if let Some(ref a) = dev.area {
+            reg["area"] = serde_json::Value::String(a.clone());
+        }
+        if let Err(e) = client.register_device(&dev.hc_id, &dev.name, capabilities.clone()).await {
+            warn!(hc_id = %dev.hc_id, error = %e, "Failed to register device");
+        }
+        if let Err(e) = client.register_device_schema(&dev.hc_id, &schema).await {
+            warn!(hc_id = %dev.hc_id, error = %e, "Failed to publish schema");
+        }
+        if let Err(e) = client.subscribe_commands(&dev.hc_id).await {
+            error!(hc_id = %dev.hc_id, error = %e, "Failed to subscribe commands");
+        }
+    }
+
+    // Start the SDK event loop — routes device commands to the mpsc channel.
+    let cmd_tx_clone = cmd_tx.clone();
+    tokio::spawn(async move {
+        if let Err(e) = client
+            .run_managed(
+                move |device_id, payload| {
+                    let _ = cmd_tx_clone.try_send((device_id, payload));
+                },
+                mgmt,
+            )
+            .await
+        {
+            error!(error = %e, "SDK event loop exited with error");
+        }
+    });
 
     let bridge = bridge::Bridge::new(cfg.clone(), publisher);
     bridge.run(cmd_rx).await;
     Ok(())
+}
+
+fn wled_capabilities() -> serde_json::Value {
+    json!({
+        "on":               { "type": "boolean" },
+        "brightness":       { "type": "integer", "minimum": 0, "maximum": 255 },
+        "brightness_pct":   { "type": "number",  "minimum": 0, "maximum": 100 },
+        "color":            { "type": "array", "items": { "type": "integer" }, "minItems": 3, "maxItems": 3 },
+        "effect_id":        { "type": "integer", "minimum": 0 },
+        "effect_speed":     { "type": "integer", "minimum": 0, "maximum": 255 },
+        "effect_intensity": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "palette_id":       { "type": "integer", "minimum": 0 },
+        "preset_id":        { "type": "integer" }
+    })
+}
+
+fn build_wled_schema() -> DeviceSchema {
+    let mut attrs = HashMap::new();
+    attrs.insert("on".into(), AttributeSchema {
+        kind: AttributeKind::Bool,
+        writable: true,
+        display_name: Some("Power".into()),
+        unit: None, min: None, max: None, step: None, options: None,
+    });
+    attrs.insert("brightness_pct".into(), AttributeSchema {
+        kind: AttributeKind::Integer,
+        writable: true,
+        display_name: Some("Brightness".into()),
+        unit: Some("%".into()),
+        min: Some(0.0), max: Some(100.0), step: Some(1.0),
+        options: None,
+    });
+    attrs.insert("preset".into(), AttributeSchema {
+        kind: AttributeKind::Integer,
+        writable: true,
+        display_name: Some("Preset".into()),
+        unit: None,
+        min: Some(1.0), max: Some(250.0), step: Some(1.0),
+        options: None,
+    });
+    DeviceSchema { attributes: attrs }
 }
 
 fn published_ids_cache_path(config_path: &str) -> PathBuf {
