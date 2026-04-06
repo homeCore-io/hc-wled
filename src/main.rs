@@ -86,47 +86,9 @@ async fn try_start(cfg: &WledConfig, config_path: &str, log_level_handle: hc_log
         )
         .await?;
 
-    // Clean up stale devices from previous config.
-    let current_ids: Vec<String> = cfg.devices.iter().map(|d| d.hc_id.clone()).collect();
-    let cache_path = published_ids_cache_path(config_path);
-    let previous_ids = load_published_ids(&cache_path);
-    for stale_id in previous_ids
-        .into_iter()
-        .filter(|id| !current_ids.contains(id))
-    {
-        if let Err(e) = client.unregister_device(&stale_id).await {
-            error!(device_id = %stale_id, error = %e, "Failed to unregister stale device");
-        } else {
-            info!(device_id = %stale_id, "Unregistered stale configured device");
-        }
-    }
-    save_published_ids(&cache_path, &current_ids)?;
-
-    // Register all devices and subscribe to commands while we still have &PluginClient.
-    let schema = build_wled_schema();
-    let capabilities = wled_capabilities();
-    for dev in &cfg.devices {
-        if let Err(e) = client
-            .register_device_full(
-                &dev.hc_id,
-                &dev.name,
-                None,
-                dev.area.as_deref(),
-                Some(capabilities.clone()),
-            )
-            .await
-        {
-            warn!(hc_id = %dev.hc_id, error = %e, "Failed to register device");
-        }
-        if let Err(e) = client.register_device_schema(&dev.hc_id, &schema).await {
-            warn!(hc_id = %dev.hc_id, error = %e, "Failed to publish schema");
-        }
-        if let Err(e) = client.subscribe_commands(&dev.hc_id).await {
-            error!(hc_id = %dev.hc_id, error = %e, "Failed to subscribe commands");
-        }
-    }
-
-    // Start the SDK event loop — routes device commands to the mpsc channel.
+    // Start the SDK event loop FIRST so the MQTT eventloop is pumping while
+    // we register devices.  Without this, queued publishes block forever once
+    // the rumqttc internal buffer (64) fills up.
     let cmd_tx_clone = cmd_tx.clone();
     tokio::spawn(async move {
         if let Err(e) = client
@@ -141,6 +103,47 @@ async fn try_start(cfg: &WledConfig, config_path: &str, log_level_handle: hc_log
             error!(error = %e, "SDK event loop exited with error");
         }
     });
+
+    // Brief yield to let the eventloop connect before we start publishing.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // Clean up stale devices from previous config.
+    let current_ids: Vec<String> = cfg.devices.iter().map(|d| d.hc_id.clone()).collect();
+    let cache_path = published_ids_cache_path(config_path);
+    let previous_ids = load_published_ids(&cache_path);
+    let plugin_id = &cfg.homecore.plugin_id;
+    for stale_id in previous_ids
+        .into_iter()
+        .filter(|id| !current_ids.contains(id))
+    {
+        if let Err(e) = publisher.unregister_device(plugin_id, &stale_id).await {
+            error!(device_id = %stale_id, error = %e, "Failed to unregister stale device");
+        } else {
+            info!(device_id = %stale_id, "Unregistered stale configured device");
+        }
+    }
+    save_published_ids(&cache_path, &current_ids)?;
+
+    // Register all devices via DevicePublisher (PluginClient is consumed).
+    let schema = build_wled_schema();
+    let capabilities = wled_capabilities();
+    for dev in &cfg.devices {
+        if let Err(e) = publisher
+            .register_device_full(
+                &dev.hc_id,
+                &dev.name,
+                None,
+                dev.area.as_deref(),
+                Some(capabilities.clone()),
+            )
+            .await
+        {
+            warn!(hc_id = %dev.hc_id, error = %e, "Failed to register device");
+        }
+        if let Err(e) = publisher.register_device_schema(&dev.hc_id, &schema).await {
+            warn!(hc_id = %dev.hc_id, error = %e, "Failed to publish schema");
+        }
+    }
 
     let bridge = bridge::Bridge::new(cfg.clone(), publisher);
     bridge.run(cmd_rx).await;
