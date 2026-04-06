@@ -143,6 +143,9 @@ async fn try_start(cfg: &WledConfig, config_path: &str, log_level_handle: hc_log
         if let Err(e) = publisher.register_device_schema(&dev.hc_id, &schema).await {
             warn!(hc_id = %dev.hc_id, error = %e, "Failed to publish schema");
         }
+        if let Err(e) = publisher.subscribe_commands(&dev.hc_id).await {
+            error!(hc_id = %dev.hc_id, error = %e, "Failed to subscribe commands");
+        }
     }
 
     let bridge = bridge::Bridge::new(cfg.clone(), publisher);
