@@ -5,6 +5,8 @@ use serde::Deserialize;
 pub struct WledConfig {
     pub homecore: HomecoreConfig,
     #[serde(default)]
+    pub logging: crate::logging::LoggingConfig,
+    #[serde(default)]
     pub wled: WledGlobalConfig,
     #[serde(default)]
     pub devices: Vec<DeviceConfig>,
