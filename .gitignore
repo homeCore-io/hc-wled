@@ -4,4 +4,5 @@ target
 *.pdb
 .idea/
 config/config.toml
+config/config.dev.toml
 logs/
