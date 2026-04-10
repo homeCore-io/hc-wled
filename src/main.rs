@@ -15,7 +15,7 @@ use tracing::{error, info, warn};
 
 use config::WledConfig;
 
-const MAX_ATTEMPTS:    u32 = 3;
+const MAX_ATTEMPTS: u32 = 3;
 const RETRY_DELAY_SECS: u64 = 30;
 
 #[tokio::main]
@@ -27,7 +27,7 @@ async fn main() {
     let (_log_guard, log_level_handle, mqtt_log_handle) = init_logging(&config_path);
 
     let cfg = match WledConfig::load(&config_path) {
-        Ok(c)  => c,
+        Ok(c) => c,
         Err(e) => {
             error!(error = %e, path = %config_path, "Failed to load config");
             std::process::exit(1);
@@ -36,9 +36,16 @@ async fn main() {
 
     for attempt in 1..=MAX_ATTEMPTS {
         info!(attempt, max = MAX_ATTEMPTS, "Starting hc-wled plugin");
-        match try_start(&cfg, &config_path, log_level_handle.clone(), mqtt_log_handle.clone()).await {
-            Ok(())  => return,
-            Err(e)  => {
+        match try_start(
+            &cfg,
+            &config_path,
+            log_level_handle.clone(),
+            mqtt_log_handle.clone(),
+        )
+        .await
+        {
+            Ok(()) => return,
+            Err(e) => {
                 if attempt < MAX_ATTEMPTS {
                     error!(error = %e, attempt, "Startup failed; retrying in {RETRY_DELAY_SECS} s");
                     tokio::time::sleep(Duration::from_secs(RETRY_DELAY_SECS)).await;
@@ -51,7 +58,13 @@ async fn main() {
     }
 }
 
-fn init_logging(config_path: &str) -> (tracing_appender::non_blocking::WorkerGuard, hc_logging::LogLevelHandle, plugin_sdk_rs::mqtt_log_layer::MqttLogHandle) {
+fn init_logging(
+    config_path: &str,
+) -> (
+    tracing_appender::non_blocking::WorkerGuard,
+    hc_logging::LogLevelHandle,
+    plugin_sdk_rs::mqtt_log_layer::MqttLogHandle,
+) {
     #[derive(serde::Deserialize, Default)]
     struct Bootstrap {
         #[serde(default)]
@@ -64,12 +77,17 @@ fn init_logging(config_path: &str) -> (tracing_appender::non_blocking::WorkerGua
     logging::init_logging(config_path, "hc-wled", "hc_wled=info", &bootstrap.logging)
 }
 
-async fn try_start(cfg: &WledConfig, config_path: &str, log_level_handle: hc_logging::LogLevelHandle, mqtt_log_handle: plugin_sdk_rs::mqtt_log_layer::MqttLogHandle) -> Result<()> {
+async fn try_start(
+    cfg: &WledConfig,
+    config_path: &str,
+    log_level_handle: hc_logging::LogLevelHandle,
+    mqtt_log_handle: plugin_sdk_rs::mqtt_log_layer::MqttLogHandle,
+) -> Result<()> {
     let sdk_config = PluginConfig {
         broker_host: cfg.homecore.broker_host.clone(),
         broker_port: cfg.homecore.broker_port,
-        plugin_id:   cfg.homecore.plugin_id.clone(),
-        password:    cfg.homecore.password.clone(),
+        plugin_id: cfg.homecore.plugin_id.clone(),
+        password: cfg.homecore.password.clone(),
     };
 
     let client = PluginClient::connect(sdk_config).await?;
@@ -174,28 +192,45 @@ fn wled_capabilities() -> serde_json::Value {
 
 fn build_wled_schema() -> DeviceSchema {
     let mut attrs = HashMap::new();
-    attrs.insert("on".into(), AttributeSchema {
-        kind: AttributeKind::Bool,
-        writable: true,
-        display_name: Some("Power".into()),
-        unit: None, min: None, max: None, step: None, options: None,
-    });
-    attrs.insert("brightness_pct".into(), AttributeSchema {
-        kind: AttributeKind::Integer,
-        writable: true,
-        display_name: Some("Brightness".into()),
-        unit: Some("%".into()),
-        min: Some(0.0), max: Some(100.0), step: Some(1.0),
-        options: None,
-    });
-    attrs.insert("preset".into(), AttributeSchema {
-        kind: AttributeKind::Integer,
-        writable: true,
-        display_name: Some("Preset".into()),
-        unit: None,
-        min: Some(1.0), max: Some(250.0), step: Some(1.0),
-        options: None,
-    });
+    attrs.insert(
+        "on".into(),
+        AttributeSchema {
+            kind: AttributeKind::Bool,
+            writable: true,
+            display_name: Some("Power".into()),
+            unit: None,
+            min: None,
+            max: None,
+            step: None,
+            options: None,
+        },
+    );
+    attrs.insert(
+        "brightness_pct".into(),
+        AttributeSchema {
+            kind: AttributeKind::Integer,
+            writable: true,
+            display_name: Some("Brightness".into()),
+            unit: Some("%".into()),
+            min: Some(0.0),
+            max: Some(100.0),
+            step: Some(1.0),
+            options: None,
+        },
+    );
+    attrs.insert(
+        "preset".into(),
+        AttributeSchema {
+            kind: AttributeKind::Integer,
+            writable: true,
+            display_name: Some("Preset".into()),
+            unit: None,
+            min: Some(1.0),
+            max: Some(250.0),
+            step: Some(1.0),
+            options: None,
+        },
+    );
     DeviceSchema { attributes: attrs }
 }
 

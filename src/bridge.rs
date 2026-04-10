@@ -16,7 +16,7 @@ use crate::config::{DeviceConfig, WledConfig};
 use crate::wled::{WledClient, WledState};
 
 pub struct Bridge {
-    cfg:       WledConfig,
+    cfg: WledConfig,
     publisher: DevicePublisher,
 }
 
@@ -27,9 +27,11 @@ impl Bridge {
 
     pub async fn run(self, mut cmd_rx: mpsc::Receiver<(String, Value)>) {
         for dev in &self.cfg.devices {
-            let client     = WledClient::new(&dev.host);
-            let publisher  = self.publisher.clone();
-            let poll_secs  = dev.poll_interval_secs.unwrap_or(self.cfg.wled.poll_interval_secs);
+            let client = WledClient::new(&dev.host);
+            let publisher = self.publisher.clone();
+            let poll_secs = dev
+                .poll_interval_secs
+                .unwrap_or(self.cfg.wled.poll_interval_secs);
 
             // Fetch initial state + determine transport
             let ws_supported = startup_device(&client, dev, &publisher).await;
@@ -45,7 +47,10 @@ impl Bridge {
         }
 
         // Command routing map: hc_id → host
-        let host_map: HashMap<String, String> = self.cfg.devices.iter()
+        let host_map: HashMap<String, String> = self
+            .cfg
+            .devices
+            .iter()
             .map(|d| (d.hc_id.clone(), d.host.clone()))
             .collect();
 
@@ -54,11 +59,14 @@ impl Bridge {
         while let Some((hc_id, cmd)) = cmd_rx.recv().await {
             let host = match host_map.get(&hc_id) {
                 Some(h) => h.clone(),
-                None    => { warn!(hc_id, "Command for unknown device"); continue; }
+                None => {
+                    warn!(hc_id, "Command for unknown device");
+                    continue;
+                }
             };
-            let client    = WledClient::new(&host);
+            let client = WledClient::new(&host);
             let publisher = self.publisher.clone();
-            let hc_id2    = hc_id.clone();
+            let hc_id2 = hc_id.clone();
             tokio::spawn(async move {
                 debug!(hc_id = %hc_id2, cmd = ?cmd, "Executing command");
                 match execute_command(&client, &cmd).await {
@@ -85,8 +93,8 @@ impl Bridge {
 /// Registration is handled in main.rs before the bridge starts.
 /// Returns true if the device reports WebSocket support.
 async fn startup_device(
-    client:    &WledClient,
-    dev:       &DeviceConfig,
+    client: &WledClient,
+    dev: &DeviceConfig,
     publisher: &DevicePublisher,
 ) -> bool {
     match client.get_info().await {
@@ -103,7 +111,9 @@ async fn startup_device(
             );
             let _ = publisher.set_available(&dev.hc_id, true).await;
             if let Ok(state) = client.get_state().await {
-                let _ = publisher.publish_state(&dev.hc_id, &state_to_json(&state)).await;
+                let _ = publisher
+                    .publish_state(&dev.hc_id, &state_to_json(&state))
+                    .await;
             }
             info.ws >= 0
         }
@@ -118,8 +128,8 @@ async fn startup_device(
 /// Drive state updates via WLED's WebSocket (`ws://{host}/ws`).
 /// Falls back to polling on connection error and reconnects automatically.
 async fn run_websocket(
-    dev:       DeviceConfig,
-    ws_url:    String,
+    dev: DeviceConfig,
+    ws_url: String,
     publisher: DevicePublisher,
     poll_secs: u64,
 ) {
@@ -131,17 +141,15 @@ async fn run_websocket(
                 let _ = publisher.set_available(&dev.hc_id, true).await;
                 while let Some(msg) = ws.next().await {
                     match msg {
-                        Ok(Message::Text(text)) => {
-                            match serde_json::from_str::<WledState>(&text) {
-                                Ok(state) => {
-                                    let j = state_to_json(&state);
-                                    if let Err(e) = publisher.publish_state(&dev.hc_id, &j).await {
-                                        warn!(hc_id = %dev.hc_id, error = %e, "Failed to publish WS state");
-                                    }
+                        Ok(Message::Text(text)) => match serde_json::from_str::<WledState>(&text) {
+                            Ok(state) => {
+                                let j = state_to_json(&state);
+                                if let Err(e) = publisher.publish_state(&dev.hc_id, &j).await {
+                                    warn!(hc_id = %dev.hc_id, error = %e, "Failed to publish WS state");
                                 }
-                                Err(_) => {}
                             }
-                        }
+                            Err(_) => {}
+                        },
                         Ok(Message::Close(_)) | Err(_) => break,
                         _ => {}
                     }
@@ -152,7 +160,9 @@ async fn run_websocket(
             Err(e) => {
                 warn!(hc_id = %dev.hc_id, error = %e, "WebSocket connect failed; falling back to poll");
                 if let Ok(state) = client.get_state().await {
-                    let _ = publisher.publish_state(&dev.hc_id, &state_to_json(&state)).await;
+                    let _ = publisher
+                        .publish_state(&dev.hc_id, &state_to_json(&state))
+                        .await;
                     let _ = publisher.set_available(&dev.hc_id, true).await;
                 } else {
                     let _ = publisher.set_available(&dev.hc_id, false).await;
@@ -165,9 +175,9 @@ async fn run_websocket(
 
 /// Drive state updates via periodic HTTP polling.
 async fn run_poller(dev: DeviceConfig, publisher: DevicePublisher, poll_secs: u64) {
-    let client       = WledClient::new(&dev.host);
-    let mut ticker   = interval(Duration::from_secs(poll_secs));
-    let mut online   = true;
+    let client = WledClient::new(&dev.host);
+    let mut ticker = interval(Duration::from_secs(poll_secs));
+    let mut online = true;
 
     loop {
         ticker.tick().await;
@@ -259,10 +269,10 @@ pub fn state_to_json(state: &WledState) -> Value {
         if let Some(primary) = seg.col.first() {
             j["color"] = primary.clone();
         }
-        j["effect_id"]        = json!(seg.fx);
-        j["effect_speed"]     = json!(seg.sx);
+        j["effect_id"] = json!(seg.fx);
+        j["effect_speed"] = json!(seg.sx);
         j["effect_intensity"] = json!(seg.ix);
-        j["palette_id"]       = json!(seg.pal);
+        j["palette_id"] = json!(seg.pal);
     }
 
     j

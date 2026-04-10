@@ -11,13 +11,13 @@ use std::time::Duration;
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 pub struct WledInfo {
-    pub ver:      String,
-    pub name:     String,
-    pub leds:     LedInfo,
+    pub ver: String,
+    pub name: String,
+    pub leds: LedInfo,
     /// Number of connected WebSocket clients; -1 = WS not supported.
     #[serde(default = "neg_one")]
-    pub ws:       i32,
-    pub fxcount:  u32,
+    pub ws: i32,
+    pub fxcount: u32,
     pub palcount: u32,
 }
 
@@ -26,21 +26,21 @@ pub struct WledInfo {
 pub struct LedInfo {
     pub count: u32,
     #[serde(default)]
-    pub pwr:   u32,
+    pub pwr: u32,
     #[serde(default)]
-    pub rgbw:  bool,
+    pub rgbw: bool,
     #[serde(default)]
-    pub cct:   bool,
+    pub cct: bool,
 }
 
 // ── State response ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WledState {
-    pub on:  bool,
+    pub on: bool,
     pub bri: u8,
     #[serde(default = "neg_one")]
-    pub ps:  i32,
+    pub ps: i32,
     #[serde(default)]
     pub seg: Vec<Segment>,
 }
@@ -49,28 +49,36 @@ pub struct WledState {
 #[allow(dead_code)]
 pub struct Segment {
     #[serde(default)]
-    pub id:  u32,
+    pub id: u32,
     /// [[r,g,b], [r,g,b], [r,g,b]] — primary, secondary, tertiary.
     #[serde(default)]
     pub col: Vec<Value>,
     #[serde(default)]
-    pub fx:  u32,
+    pub fx: u32,
     #[serde(default = "mid_u8")]
-    pub sx:  u8,
+    pub sx: u8,
     #[serde(default = "mid_u8")]
-    pub ix:  u8,
+    pub ix: u8,
     #[serde(default)]
     pub pal: u32,
     #[serde(default = "yes")]
-    pub on:  bool,
+    pub on: bool,
     #[serde(default = "max_u8")]
     pub bri: u8,
 }
 
-fn neg_one() -> i32 { -1 }
-fn mid_u8()  -> u8  { 128 }
-fn max_u8()  -> u8  { 255 }
-fn yes()     -> bool { true }
+fn neg_one() -> i32 {
+    -1
+}
+fn mid_u8() -> u8 {
+    128
+}
+fn max_u8() -> u8 {
+    255
+}
+fn yes() -> bool {
+    true
+}
 
 // ── HTTP client ───────────────────────────────────────────────────────────
 
@@ -99,27 +107,38 @@ impl WledClient {
     pub async fn get_info(&self) -> Result<WledInfo> {
         self.http
             .get(format!("{}/json/info", self.base))
-            .send().await.context("GET /json/info")?
-            .json().await.context("parse /json/info")
+            .send()
+            .await
+            .context("GET /json/info")?
+            .json()
+            .await
+            .context("parse /json/info")
     }
 
     pub async fn get_state(&self) -> Result<WledState> {
         self.http
             .get(format!("{}/json/state", self.base))
-            .send().await.context("GET /json/state")?
-            .json().await.context("parse /json/state")
+            .send()
+            .await
+            .context("GET /json/state")?
+            .json()
+            .await
+            .context("parse /json/state")
     }
 
     pub async fn post_state(&self, body: &Value) -> Result<()> {
-        let resp = self.http
+        let resp = self
+            .http
             .post(format!("{}/json/state", self.base))
             .json(body)
-            .send().await.context("POST /json/state")?;
+            .send()
+            .await
+            .context("POST /json/state")?;
         if resp.status().is_success() {
             return Ok(());
         }
         let status = resp.status();
-        let text   = resp.text().await.unwrap_or_default();
+        let text = resp.text().await.unwrap_or_default();
         anyhow::bail!("WLED {status}: {text}");
     }
 
@@ -127,7 +146,11 @@ impl WledClient {
     pub async fn get_effect_names(&self) -> Result<Vec<String>> {
         self.http
             .get(format!("{}/json/eff", self.base))
-            .send().await.context("GET /json/eff")?
-            .json().await.context("parse /json/eff")
+            .send()
+            .await
+            .context("GET /json/eff")?
+            .json()
+            .await
+            .context("parse /json/eff")
     }
 }
