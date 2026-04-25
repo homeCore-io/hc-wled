@@ -99,7 +99,13 @@ async fn try_start(
     let publisher = client.device_publisher();
     let (cmd_tx, cmd_rx) = mpsc::channel(256);
 
-    // Enable management protocol (heartbeat + remote config/log commands).
+    // Stash the device list so the management custom_handler closure
+    // can hit any of them on demand for discovery / refresh / reboot
+    // calls without going through the bridge runtime's command path.
+    let devices_for_mgmt = cfg.devices.clone();
+
+    // Enable management protocol (heartbeat + remote config/log commands +
+    // capability manifest).
     let mgmt = client
         .enable_management(
             60,
@@ -107,7 +113,31 @@ async fn try_start(
             Some(config_path.to_string()),
             Some(log_level_handle),
         )
-        .await?;
+        .await?
+        .with_capabilities(capabilities_manifest())
+        .with_custom_handler(move |cmd| {
+            let action = cmd["action"].as_str()?.to_string();
+            let devices = devices_for_mgmt.clone();
+            // Route each manifest action through a one-shot tokio
+            // runtime — the SDK's custom_handler is a sync fn returning
+            // Option<Value>, but the WLED HTTP client is async. The
+            // runtime is cheap and isolated to this single call.
+            let action_for_err = action.clone();
+            let result = std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .ok()?;
+                rt.block_on(async move { run_action(&action, &devices).await })
+            })
+            .join()
+            .ok()
+            .flatten();
+            result.or(Some(json!({
+                "status": "error",
+                "error": format!("action '{action_for_err}' failed or is unknown"),
+            })))
+        });
 
     // Start the SDK event loop FIRST so the MQTT eventloop is pumping while
     // we register devices.  Without this, queued publishes block forever once
@@ -252,4 +282,212 @@ fn save_published_ids(path: &Path, device_ids: &[String]) -> Result<()> {
     let payload = serde_json::to_vec_pretty(device_ids)?;
     std::fs::write(path, payload)?;
     Ok(())
+}
+
+/// Capability manifest. Plugin-wide actions that aren't tied to a
+/// specific device — discovery, library refresh, reboot. Per-device
+/// commands (`apply_preset`, `save_preset`, `identify`) flow through
+/// `PATCH /devices/:id/state` instead, handled by the bridge's
+/// `execute_command`.
+fn capabilities_manifest() -> hc_types::Capabilities {
+    use hc_types::{Action, Capabilities, Concurrency, RequiresRole};
+    Capabilities {
+        spec: "1".into(),
+        plugin_id: String::new(),
+        actions: vec![
+            Action {
+                id: "discover_devices".into(),
+                label: "Discover devices".into(),
+                description: Some(
+                    "Query the WLED-Sync mesh peer list (`/json/nodes`) \
+                     from the first configured device. Returns every WLED \
+                     instance the mesh knows about so you can decide \
+                     which ones to add to `[[devices]]` in config.toml."
+                        .into(),
+                ),
+                params: None,
+                result: Some(json!({
+                    "discovered": { "type": "array" },
+                    "count": { "type": "integer" },
+                })),
+                stream: false,
+                cancelable: false,
+                concurrency: Concurrency::default(),
+                item_key: None,
+                item_operations: None,
+                requires_role: RequiresRole::User,
+                timeout_ms: None,
+            },
+            Action {
+                id: "refresh_effects_palettes".into(),
+                label: "Refresh effects + palettes".into(),
+                description: Some(
+                    "Pull the effect-name and palette-name lists from \
+                     each configured WLED device. Returns them per device \
+                     so the UI / hc-mcp can show real names instead of \
+                     opaque numbers. Effects + palettes change with \
+                     firmware updates."
+                        .into(),
+                ),
+                params: None,
+                result: Some(json!({
+                    "devices": { "type": "object" },
+                })),
+                stream: false,
+                cancelable: false,
+                concurrency: Concurrency::default(),
+                item_key: None,
+                item_operations: None,
+                requires_role: RequiresRole::User,
+                timeout_ms: None,
+            },
+            Action {
+                id: "refresh_presets".into(),
+                label: "Refresh presets".into(),
+                description: Some(
+                    "Pull `/presets.json` from each configured device. \
+                     Returns the preset name + id list so you can pick \
+                     by name in the UI / hc-mcp."
+                        .into(),
+                ),
+                params: None,
+                result: Some(json!({
+                    "devices": { "type": "object" },
+                })),
+                stream: false,
+                cancelable: false,
+                concurrency: Concurrency::default(),
+                item_key: None,
+                item_operations: None,
+                requires_role: RequiresRole::User,
+                timeout_ms: None,
+            },
+            Action {
+                id: "reboot".into(),
+                label: "Reboot devices".into(),
+                description: Some(
+                    "Reboot every configured WLED device by hitting the \
+                     legacy `/win&RB=1` endpoint. Use sparingly — \
+                     interrupts active effects on every device. Optional \
+                     `host` param to target a single device by IP."
+                        .into(),
+                ),
+                params: Some(json!({
+                    "host": {
+                        "type": "string",
+                        "description": "Optional WLED IP/hostname; reboots all configured devices if omitted",
+                    },
+                })),
+                result: Some(json!({
+                    "rebooted": { "type": "array" },
+                })),
+                stream: false,
+                cancelable: false,
+                concurrency: Concurrency::default(),
+                item_key: None,
+                item_operations: None,
+                requires_role: RequiresRole::Admin,
+                timeout_ms: None,
+            },
+        ],
+    }
+}
+
+async fn run_action(
+    action: &str,
+    devices: &[config::DeviceConfig],
+) -> Option<serde_json::Value> {
+    use crate::wled::WledClient;
+    match action {
+        "discover_devices" => {
+            // Pick any configured device — they all see the same mesh
+            // peer list.
+            let Some(first) = devices.first() else {
+                return Some(json!({
+                    "status": "error",
+                    "error": "no devices configured to query for /json/nodes",
+                }));
+            };
+            let client = WledClient::new(&first.host);
+            match client.get_nodes().await {
+                Ok(nodes) => {
+                    // /json/nodes returns either a list of {name, ip, ...}
+                    // entries directly or wrapped under "nodes". Normalise.
+                    let arr = match nodes.get("nodes").and_then(|v| v.as_array()) {
+                        Some(a) => a.clone(),
+                        None => nodes.as_array().cloned().unwrap_or_default(),
+                    };
+                    Some(json!({
+                        "status": "ok",
+                        "discovered": arr,
+                        "count": arr.len(),
+                    }))
+                }
+                Err(e) => Some(json!({
+                    "status": "error",
+                    "error": format!("discover_devices via {}: {e}", first.host),
+                })),
+            }
+        }
+        "refresh_effects_palettes" => {
+            let mut per_device = serde_json::Map::new();
+            for d in devices {
+                let client = WledClient::new(&d.host);
+                let effects = client.get_effect_names().await.ok();
+                let palettes = client.get_palette_names().await.ok();
+                per_device.insert(
+                    d.hc_id.clone(),
+                    json!({
+                        "host": d.host,
+                        "effects": effects,
+                        "palettes": palettes,
+                    }),
+                );
+            }
+            Some(json!({
+                "status": "ok",
+                "devices": per_device,
+            }))
+        }
+        "refresh_presets" => {
+            let mut per_device = serde_json::Map::new();
+            for d in devices {
+                let client = WledClient::new(&d.host);
+                let presets = client.get_presets().await.ok();
+                per_device.insert(
+                    d.hc_id.clone(),
+                    json!({
+                        "host": d.host,
+                        "presets": presets,
+                    }),
+                );
+            }
+            Some(json!({
+                "status": "ok",
+                "devices": per_device,
+            }))
+        }
+        "reboot" => {
+            // No host filter is supported via params here (the
+            // custom_handler closure doesn't see the params object) —
+            // reboots all configured devices. The manifest's `host`
+            // param is documented for future expansion when params
+            // routing through custom_handler is wired in.
+            let mut rebooted = Vec::new();
+            for d in devices {
+                let client = WledClient::new(&d.host);
+                match client.reboot().await {
+                    Ok(()) => rebooted.push(d.host.clone()),
+                    Err(e) => {
+                        warn!(host = %d.host, error = %e, "reboot failed");
+                    }
+                }
+            }
+            Some(json!({
+                "status": "ok",
+                "rebooted": rebooted,
+            }))
+        }
+        _ => None,
+    }
 }

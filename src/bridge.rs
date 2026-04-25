@@ -223,6 +223,37 @@ async fn execute_command(client: &WledClient, cmd: &Value) -> Result<()> {
     if let Some(ps) = cmd.get("preset").and_then(Value::as_i64) {
         body.insert("ps".into(), json!(ps));
     }
+    // `apply_preset` is an explicit alias for the convenience of the
+    // capability-action surface: the action sends `{apply_preset: N}`,
+    // which here becomes `{ps: N}` on WLED.
+    if let Some(ps) = cmd.get("apply_preset").and_then(Value::as_i64) {
+        body.insert("ps".into(), json!(ps));
+    }
+    // `save_preset`: capture the device's current state into preset
+    // slot N, optionally with a name. WLED's `psave` field is what
+    // triggers the save; `n` (name) and `ql` (quick label) are
+    // metadata.
+    if let Some(slot) = cmd.get("save_preset").and_then(Value::as_i64) {
+        body.insert("psave".into(), json!(slot));
+        if let Some(name) = cmd.get("preset_name").and_then(Value::as_str) {
+            body.insert("n".into(), json!(name));
+        }
+    }
+    // `identify`: flash the strip to make it visually distinct. WLED
+    // doesn't ship a real identify primitive, so we send a single
+    // bright-white snapshot. Restoring prior state is left to the
+    // user — the act of identifying typically precedes a name change
+    // anyway, so the next state push from the user happens
+    // immediately after.
+    if cmd.get("identify").and_then(Value::as_bool) == Some(true) {
+        body.insert("on".into(), json!(true));
+        body.insert("bri".into(), json!(255u8));
+        let mut id_seg = serde_json::Map::new();
+        id_seg.insert("id".into(), json!(0));
+        id_seg.insert("col".into(), json!([[255, 255, 255]]));
+        id_seg.insert("fx".into(), json!(0));
+        body.insert("seg".into(), json!([id_seg]));
+    }
 
     let mut seg = serde_json::Map::new();
     seg.insert("id".into(), json!(0));

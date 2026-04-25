@@ -142,7 +142,6 @@ impl WledClient {
         anyhow::bail!("WLED {status}: {text}");
     }
 
-    #[allow(dead_code)]
     pub async fn get_effect_names(&self) -> Result<Vec<String>> {
         self.http
             .get(format!("{}/json/eff", self.base))
@@ -152,5 +151,61 @@ impl WledClient {
             .json()
             .await
             .context("parse /json/eff")
+    }
+
+    pub async fn get_palette_names(&self) -> Result<Vec<String>> {
+        self.http
+            .get(format!("{}/json/palettes", self.base))
+            .send()
+            .await
+            .context("GET /json/palettes")?
+            .json()
+            .await
+            .context("parse /json/palettes")
+    }
+
+    /// `/json/nodes` returns the list of peer WLED instances on the
+    /// same WLED-Sync mesh — `name`, `ip`, `vid` (firmware build)
+    /// per entry. The local device itself is included.
+    pub async fn get_nodes(&self) -> Result<Value> {
+        self.http
+            .get(format!("{}/json/nodes", self.base))
+            .send()
+            .await
+            .context("GET /json/nodes")?
+            .json()
+            .await
+            .context("parse /json/nodes")
+    }
+
+    /// `/presets.json` is the saved-presets file. Returns a JSON object
+    /// keyed by preset id (`"1"`, `"2"`, …) where each entry contains
+    /// the preset's name and the captured state.
+    pub async fn get_presets(&self) -> Result<Value> {
+        self.http
+            .get(format!("{}/presets.json", self.base))
+            .send()
+            .await
+            .context("GET /presets.json")?
+            .json()
+            .await
+            .context("parse /presets.json")
+    }
+
+    /// Reboot the WLED device. Uses the legacy URL API `/win&RB=1`
+    /// because the JSON API doesn't expose reboot in a versioned way.
+    pub async fn reboot(&self) -> Result<()> {
+        let resp = self
+            .http
+            .get(format!("{}/win&RB=1", self.base))
+            .send()
+            .await
+            .context("GET /win&RB=1")?;
+        if resp.status().is_success() {
+            return Ok(());
+        }
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        anyhow::bail!("WLED reboot failed: {status}: {text}");
     }
 }
