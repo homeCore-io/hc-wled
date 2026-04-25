@@ -49,6 +49,15 @@ impl Default for HomecoreConfig {
 pub struct WledGlobalConfig {
     #[serde(default = "default_poll")]
     pub poll_interval_secs: u64,
+    /// Static WLED IPs/hostnames the `discover_devices` manifest
+    /// action probes via `/json/nodes`, in addition to the configured
+    /// `[[devices]]`. Use this when the WLED-Sync mesh spans VLANs
+    /// the homeCore host can route to but where you haven't yet added
+    /// any `[[devices]]` entries on the far side. Each listed host is
+    /// queried once per `discover_devices` invocation; its peer list
+    /// is merged into the result.
+    #[serde(default)]
+    pub discovery_hosts: Vec<String>,
 }
 
 fn default_poll() -> u64 {
@@ -59,6 +68,7 @@ impl Default for WledGlobalConfig {
     fn default() -> Self {
         Self {
             poll_interval_secs: default_poll(),
+            discovery_hosts: Vec::new(),
         }
     }
 }

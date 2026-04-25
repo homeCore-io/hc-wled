@@ -103,6 +103,7 @@ async fn try_start(
     // can hit any of them on demand for discovery / refresh / reboot
     // calls without going through the bridge runtime's command path.
     let devices_for_mgmt = cfg.devices.clone();
+    let discovery_hosts_for_mgmt = cfg.wled.discovery_hosts.clone();
 
     // Enable management protocol (heartbeat + remote config/log commands +
     // capability manifest).
@@ -118,6 +119,7 @@ async fn try_start(
         .with_custom_handler(move |cmd| {
             let action = cmd["action"].as_str()?.to_string();
             let devices = devices_for_mgmt.clone();
+            let discovery_hosts = discovery_hosts_for_mgmt.clone();
             // Route each manifest action through a one-shot tokio
             // runtime — the SDK's custom_handler is a sync fn returning
             // Option<Value>, but the WLED HTTP client is async. The
@@ -128,7 +130,9 @@ async fn try_start(
                     .enable_all()
                     .build()
                     .ok()?;
-                rt.block_on(async move { run_action(&action, &devices).await })
+                rt.block_on(async move {
+                    run_action(&action, &devices, &discovery_hosts).await
+                })
             })
             .join()
             .ok()
@@ -396,38 +400,69 @@ fn capabilities_manifest() -> hc_types::Capabilities {
 async fn run_action(
     action: &str,
     devices: &[config::DeviceConfig],
+    discovery_hosts: &[String],
 ) -> Option<serde_json::Value> {
     use crate::wled::WledClient;
     match action {
         "discover_devices" => {
-            // Pick any configured device — they all see the same mesh
-            // peer list.
-            let Some(first) = devices.first() else {
+            // Build the seed list: every configured device's host +
+            // every entry in [wled].discovery_hosts. The latter
+            // covers VLAN segments where no devices are configured
+            // yet but at least one WLED is reachable.
+            let mut seeds: Vec<String> = devices.iter().map(|d| d.host.clone()).collect();
+            for h in discovery_hosts {
+                if !seeds.iter().any(|s| s == h) {
+                    seeds.push(h.clone());
+                }
+            }
+            if seeds.is_empty() {
                 return Some(json!({
                     "status": "error",
-                    "error": "no devices configured to query for /json/nodes",
+                    "error": "no [[devices]] configured and no [wled].discovery_hosts \
+                             listed — nothing to query for /json/nodes",
                 }));
-            };
-            let client = WledClient::new(&first.host);
-            match client.get_nodes().await {
-                Ok(nodes) => {
-                    // /json/nodes returns either a list of {name, ip, ...}
-                    // entries directly or wrapped under "nodes". Normalise.
-                    let arr = match nodes.get("nodes").and_then(|v| v.as_array()) {
-                        Some(a) => a.clone(),
-                        None => nodes.as_array().cloned().unwrap_or_default(),
-                    };
-                    Some(json!({
-                        "status": "ok",
-                        "discovered": arr,
-                        "count": arr.len(),
-                    }))
-                }
-                Err(e) => Some(json!({
-                    "status": "error",
-                    "error": format!("discover_devices via {}: {e}", first.host),
-                })),
             }
+
+            // Query each seed in parallel; merge + dedup peer lists.
+            let mut merged: Vec<serde_json::Value> = Vec::new();
+            let mut seen_ips: std::collections::HashSet<String> = Default::default();
+            let mut probe_errors: Vec<serde_json::Value> = Vec::new();
+
+            for seed in &seeds {
+                let client = WledClient::new(seed);
+                match client.get_nodes().await {
+                    Ok(nodes) => {
+                        let arr = match nodes.get("nodes").and_then(|v| v.as_array()) {
+                            Some(a) => a.clone(),
+                            None => nodes.as_array().cloned().unwrap_or_default(),
+                        };
+                        for node in arr {
+                            let ip = node
+                                .get("ip")
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string);
+                            let dedup_key = ip.clone().unwrap_or_default();
+                            if dedup_key.is_empty() || seen_ips.insert(dedup_key) {
+                                merged.push(node);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        probe_errors.push(json!({
+                            "host": seed,
+                            "error": e.to_string(),
+                        }));
+                    }
+                }
+            }
+
+            Some(json!({
+                "status": "ok",
+                "discovered": merged,
+                "count": merged.len(),
+                "seeds": seeds,
+                "errors": probe_errors,
+            }))
         }
         "refresh_effects_palettes" => {
             let mut per_device = serde_json::Map::new();
