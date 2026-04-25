@@ -1,4 +1,5 @@
 mod bridge;
+mod bridge_info;
 mod config;
 mod logging;
 mod wled;
@@ -204,6 +205,13 @@ async fn try_start(
             error!(hc_id = %dev.hc_id, error = %e, "Failed to subscribe commands");
         }
     }
+
+    // Slow info-poller: per-device task that polls /json/info,
+    // /json/nodes, /presets.json every 5 minutes and partial-merges
+    // firmware/hardware/wifi/peer attributes onto the existing device.
+    // Surfaces the data the manifest's get-actions used to fetch on
+    // demand but never had a place to display.
+    bridge_info::spawn_per_device(publisher.clone(), cfg.devices.clone());
 
     let bridge = bridge::Bridge::new(cfg.clone(), publisher);
     bridge.run(cmd_rx).await;

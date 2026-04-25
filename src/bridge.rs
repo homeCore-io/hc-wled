@@ -141,15 +141,14 @@ async fn run_websocket(
                 let _ = publisher.set_available(&dev.hc_id, true).await;
                 while let Some(msg) = ws.next().await {
                     match msg {
-                        Ok(Message::Text(text)) => match serde_json::from_str::<WledState>(&text) {
-                            Ok(state) => {
+                        Ok(Message::Text(text)) => {
+                            if let Ok(state) = serde_json::from_str::<WledState>(&text) {
                                 let j = state_to_json(&state);
                                 if let Err(e) = publisher.publish_state(&dev.hc_id, &j).await {
                                     warn!(hc_id = %dev.hc_id, error = %e, "Failed to publish WS state");
                                 }
                             }
-                            Err(_) => {}
-                        },
+                        }
                         Ok(Message::Close(_)) | Err(_) => break,
                         _ => {}
                     }
