@@ -91,7 +91,12 @@ async fn try_start(
         password: cfg.homecore.password.clone(),
     };
 
-    let client = PluginClient::connect(sdk_config).await?;
+    let client = PluginClient::connect(sdk_config)
+        .await?
+        // Cross-restart device tracking via the SDK. The path is the
+        // same `.published-device-ids.json` the plugin used to manage
+        // by hand, so existing snapshots are picked up unchanged.
+        .with_device_persistence(published_ids_cache_path(config_path));
     mqtt_log_handle.connect(
         client.mqtt_client(),
         &cfg.homecore.plugin_id,
@@ -165,23 +170,6 @@ async fn try_start(
     // Brief yield to let the eventloop connect before we start publishing.
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    // Clean up stale devices from previous config.
-    let current_ids: Vec<String> = cfg.devices.iter().map(|d| d.hc_id.clone()).collect();
-    let cache_path = published_ids_cache_path(config_path);
-    let previous_ids = load_published_ids(&cache_path);
-    let plugin_id = &cfg.homecore.plugin_id;
-    for stale_id in previous_ids
-        .into_iter()
-        .filter(|id| !current_ids.contains(id))
-    {
-        if let Err(e) = publisher.unregister_device(plugin_id, &stale_id).await {
-            error!(device_id = %stale_id, error = %e, "Failed to unregister stale device");
-        } else {
-            info!(device_id = %stale_id, "Unregistered stale configured device");
-        }
-    }
-    save_published_ids(&cache_path, &current_ids)?;
-
     // Register all devices via DevicePublisher (PluginClient is consumed).
     let schema = build_wled_schema();
     let capabilities = wled_capabilities();
@@ -204,6 +192,14 @@ async fn try_start(
         if let Err(e) = publisher.subscribe_commands(&dev.hc_id).await {
             error!(hc_id = %dev.hc_id, error = %e, "Failed to subscribe commands");
         }
+    }
+
+    // Reconcile against the SDK-tracked set: anything from a prior
+    // session that's no longer in `[[devices]]` gets unregistered.
+    let live: std::collections::HashSet<String> =
+        cfg.devices.iter().map(|d| d.hc_id.clone()).collect();
+    if let Err(e) = publisher.reconcile_devices(live).await {
+        warn!(error = %e, "reconcile_devices failed");
     }
 
     // Slow info-poller: per-device task that polls /json/info,
@@ -276,24 +272,14 @@ fn build_wled_schema() -> DeviceSchema {
     DeviceSchema { attributes: attrs }
 }
 
+/// Path of the cross-restart device-id snapshot, sibling to
+/// `config.toml`. Owned by the SDK's device tracker — see
+/// `PluginClient::with_device_persistence`.
 fn published_ids_cache_path(config_path: &str) -> PathBuf {
     Path::new(config_path)
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join(".published-device-ids.json")
-}
-
-fn load_published_ids(path: &Path) -> Vec<String> {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|text| serde_json::from_str::<Vec<String>>(&text).ok())
-        .unwrap_or_default()
-}
-
-fn save_published_ids(path: &Path, device_ids: &[String]) -> Result<()> {
-    let payload = serde_json::to_vec_pretty(device_ids)?;
-    std::fs::write(path, payload)?;
-    Ok(())
 }
 
 /// Capability manifest. Plugin-wide actions that aren't tied to a
