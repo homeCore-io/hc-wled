@@ -136,9 +136,7 @@ async fn try_start(
                     .enable_all()
                     .build()
                     .ok()?;
-                rt.block_on(async move {
-                    run_action(&action, &devices, &discovery_hosts).await
-                })
+                rt.block_on(async move { run_action(&action, &devices, &discovery_hosts).await })
             })
             .join()
             .ok()
@@ -431,10 +429,7 @@ async fn run_action(
                             None => nodes.as_array().cloned().unwrap_or_default(),
                         };
                         for node in arr {
-                            let ip = node
-                                .get("ip")
-                                .and_then(|v| v.as_str())
-                                .map(str::to_string);
+                            let ip = node.get("ip").and_then(|v| v.as_str()).map(str::to_string);
                             let dedup_key = ip.clone().unwrap_or_default();
                             if dedup_key.is_empty() || seen_ips.insert(dedup_key) {
                                 merged.push(node);

@@ -33,10 +33,7 @@ pub fn spawn_per_device(publisher: DevicePublisher, devices: Vec<crate::config::
             // partial merge to land on top of an already-published
             // device, not before it.
             tokio::time::sleep(Duration::from_secs(5)).await;
-            let http = match Client::builder()
-                .timeout(Duration::from_secs(5))
-                .build()
-            {
+            let http = match Client::builder().timeout(Duration::from_secs(5)).build() {
                 Ok(c) => c,
                 Err(e) => {
                     warn!(hc_id = %dev.hc_id, error = %e, "bridge_info reqwest build failed");
