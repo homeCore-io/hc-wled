@@ -1,5 +1,7 @@
 # hc-wled
 
+[![CI](https://github.com/homeCore-io/hc-wled/actions/workflows/ci.yml/badge.svg)](https://github.com/homeCore-io/hc-wled/actions/workflows/ci.yml) [![Release](https://github.com/homeCore-io/hc-wled/actions/workflows/release.yml/badge.svg)](https://github.com/homeCore-io/hc-wled/actions/workflows/release.yml) [![Dashboard](https://img.shields.io/badge/builds-dashboard-blue?style=flat-square)](https://homecore.io/lf-workflow-dash/)
+
 Bridges WLED LED controllers into HomeCore via WebSocket with REST polling fallback.
 
 ## Published state
