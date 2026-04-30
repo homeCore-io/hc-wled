@@ -29,7 +29,3 @@ tokio-tungstenite  = { version = "0.24", features = ["connect"] }
 futures-util       = "0.3"
 
 # Size-optimized release profile (matches homeCore-io/homeCore).
-[profile.release]
-strip         = "symbols"
-lto           = "thin"
-codegen-units = 1
