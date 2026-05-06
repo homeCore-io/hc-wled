@@ -5,7 +5,7 @@ mod logging;
 mod wled;
 
 use anyhow::Result;
-use hc_types::schema::{AttributeKind, AttributeSchema, DeviceSchema};
+use plugin_sdk_rs::types::schema::{AttributeKind, AttributeSchema, DeviceSchema};
 use plugin_sdk_rs::{PluginClient, PluginConfig};
 use serde_json::json;
 use std::collections::HashMap;
@@ -63,7 +63,7 @@ fn init_logging(
     config_path: &str,
 ) -> (
     tracing_appender::non_blocking::WorkerGuard,
-    hc_logging::LogLevelHandle,
+    plugin_sdk_rs::logging::LogLevelHandle,
     plugin_sdk_rs::mqtt_log_layer::MqttLogHandle,
 ) {
     #[derive(serde::Deserialize, Default)]
@@ -81,7 +81,7 @@ fn init_logging(
 async fn try_start(
     cfg: &WledConfig,
     config_path: &str,
-    log_level_handle: hc_logging::LogLevelHandle,
+    log_level_handle: plugin_sdk_rs::logging::LogLevelHandle,
     mqtt_log_handle: plugin_sdk_rs::mqtt_log_layer::MqttLogHandle,
 ) -> Result<()> {
     let sdk_config = PluginConfig {
@@ -285,8 +285,8 @@ fn published_ids_cache_path(config_path: &str) -> PathBuf {
 /// commands (`apply_preset`, `save_preset`, `identify`) flow through
 /// `PATCH /devices/:id/state` instead, handled by the bridge's
 /// `execute_command`.
-fn capabilities_manifest() -> hc_types::Capabilities {
-    use hc_types::{Action, Capabilities, Concurrency, RequiresRole};
+fn capabilities_manifest() -> plugin_sdk_rs::types::Capabilities {
+    use plugin_sdk_rs::types::{Action, Capabilities, Concurrency, RequiresRole};
     Capabilities {
         spec: "1".into(),
         plugin_id: String::new(),
