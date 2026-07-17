@@ -1,7 +1,20 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
+/// The operator-config JSON Schema, published on the capability manifest so the
+/// hc-web editor renders a typed form. `None` when built without `schema`.
+#[cfg(feature = "schema")]
+pub fn config_schema() -> Option<serde_json::Value> {
+    serde_json::to_value(schemars::schema_for!(WledConfig)).ok()
+}
+
+#[cfg(not(feature = "schema"))]
+pub fn config_schema() -> Option<serde_json::Value> {
+    None
+}
+
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct WledConfig {
     pub homecore: HomecoreConfig,
     #[serde(default)]
@@ -13,6 +26,7 @@ pub struct WledConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct HomecoreConfig {
     #[serde(default = "default_host")]
     pub broker_host: String,
@@ -46,6 +60,7 @@ impl Default for HomecoreConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct WledGlobalConfig {
     #[serde(default = "default_poll")]
     pub poll_interval_secs: u64,
@@ -74,6 +89,7 @@ impl Default for WledGlobalConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DeviceConfig {
     /// IP address or hostname of the WLED device.
     pub host: String,

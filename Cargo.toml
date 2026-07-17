@@ -10,7 +10,14 @@ repository  = "https://github.com/homeCore-io/hc-wled"
 name = "hc-wled"
 path = "src/main.rs"
 
+[features]
+default = ["schema"]
+# Publishes the operator-config JSON Schema on the capability manifest so the
+# hc-web editor renders a typed form. Off = leaner build, no schemars.
+schema = ["dep:schemars"]
+
 [dependencies]
+schemars           = { version = "0.8", optional = true }
 plugin-sdk-rs      = { git = "https://github.com/homeCore-io/hc-plugin-sdk-rs", branch = "main" }
 tokio              = { version = "1", features = ["full"] }
 serde              = { version = "1", features = ["derive"] }
