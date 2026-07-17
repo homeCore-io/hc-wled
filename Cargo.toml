@@ -32,3 +32,4 @@ chrono             = "0.4"
 reqwest            = { version = "0.12", features = ["json"] }
 tokio-tungstenite  = { version = "0.24", features = ["connect"] }
 futures-util       = "0.3"
+mdns-sd            = "0.11"

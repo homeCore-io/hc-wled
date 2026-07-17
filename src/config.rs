@@ -64,13 +64,12 @@ impl Default for HomecoreConfig {
 pub struct WledGlobalConfig {
     #[serde(default = "default_poll")]
     pub poll_interval_secs: u64,
-    /// Static WLED IPs/hostnames the `discover_devices` manifest
-    /// action probes via `/json/nodes`, in addition to the configured
-    /// `[[devices]]`. Use this when the WLED-Sync mesh spans VLANs
-    /// the homeCore host can route to but where you haven't yet added
-    /// any `[[devices]]` entries on the far side. Each listed host is
-    /// queried once per `discover_devices` invocation; its peer list
-    /// is merged into the result.
+    /// OPTIONAL cross-subnet fallback for `discover_devices`. Local-subnet
+    /// WLEDs are found automatically over mDNS (`_wled._tcp.local`), which is
+    /// link-local and cannot cross VLANs — so list an IP/hostname here only to
+    /// reach a WLED on a subnet the homeCore host can route to but mDNS can't.
+    /// Each listed host is queried once via `/json/nodes` and its WLED-Sync
+    /// peer list is merged into the result. Leave empty on a flat network.
     #[serde(default)]
     pub discovery_hosts: Vec<String>,
 }
