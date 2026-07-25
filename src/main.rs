@@ -278,7 +278,10 @@ fn build_wled_schema() -> DeviceSchema {
             options: None,
         },
     );
-    DeviceSchema { attributes: attrs }
+    DeviceSchema {
+        attributes: attrs,
+        ..Default::default()
+    }
 }
 
 /// Path of the cross-restart device-id snapshot, sibling to
