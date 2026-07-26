@@ -331,7 +331,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -550,7 +550,7 @@ checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
 [[package]]
 name = "hc-logging"
 version = "0.1.4"
-source = "git+https://github.com/homeCore-io/homeCore?branch=main#3f6b829b8d37d9d2cfcb78a00e129aabe426dd47"
+source = "git+https://github.com/homeCore-io/homeCore?branch=main#9412ff37e6313bf21e11dc7a23240d6cfe33be49"
 dependencies = [
  "anyhow",
  "chrono",
@@ -568,7 +568,7 @@ dependencies = [
 [[package]]
 name = "hc-time"
 version = "0.1.4"
-source = "git+https://github.com/homeCore-io/homeCore?branch=main#3f6b829b8d37d9d2cfcb78a00e129aabe426dd47"
+source = "git+https://github.com/homeCore-io/homeCore?branch=main#9412ff37e6313bf21e11dc7a23240d6cfe33be49"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -578,7 +578,7 @@ dependencies = [
 [[package]]
 name = "hc-types"
 version = "0.1.4"
-source = "git+https://github.com/homeCore-io/homeCore?branch=main#3f6b829b8d37d9d2cfcb78a00e129aabe426dd47"
+source = "git+https://github.com/homeCore-io/homeCore?branch=main#9412ff37e6313bf21e11dc7a23240d6cfe33be49"
 dependencies = [
  "chrono",
  "ron",
@@ -1054,7 +1054,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1212,8 +1212,8 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "plugin-sdk-rs"
-version = "0.3.1"
-source = "git+https://github.com/homeCore-io/hc-plugin-sdk-rs?tag=v0.3.1#a0f915fb3332e5a22f3f99c137fffdfabddabc47"
+version = "0.3.4"
+source = "git+https://github.com/homeCore-io/hc-plugin-sdk-rs?tag=v0.3.4#15e80f75d42b7dbf6789b7e778936a736f6cc84c"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1474,7 +1474,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1869,7 +1869,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

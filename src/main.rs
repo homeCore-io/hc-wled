@@ -6,7 +6,9 @@ mod logging;
 mod wled;
 
 use anyhow::Result;
-use plugin_sdk_rs::types::schema::{AttributeKind, AttributeSchema, DeviceSchema};
+use plugin_sdk_rs::types::schema::{
+    AttributeKind, AttributeSchema, BoolStates, DeviceSchema, StateLabel,
+};
 use plugin_sdk_rs::{PluginClient, PluginConfig};
 use serde_json::json;
 use std::collections::HashMap;
@@ -241,15 +243,17 @@ fn build_wled_schema() -> DeviceSchema {
     let mut attrs = HashMap::new();
     attrs.insert(
         "on".into(),
+        // Both directions named: a boolean attribute is two events, and a
+        // client that only learns "on" needs a Not gate for the other half.
         AttributeSchema {
             kind: AttributeKind::Bool,
             writable: true,
             display_name: Some("Power".into()),
-            unit: None,
-            min: None,
-            max: None,
-            step: None,
-            options: None,
+            states: Some(BoolStates {
+                when_true: StateLabel::verbed("on", "turns on"),
+                when_false: StateLabel::verbed("off", "turns off"),
+            }),
+            ..Default::default()
         },
     );
     attrs.insert(
@@ -262,7 +266,7 @@ fn build_wled_schema() -> DeviceSchema {
             min: Some(0.0),
             max: Some(100.0),
             step: Some(1.0),
-            options: None,
+            ..Default::default()
         },
     );
     attrs.insert(
@@ -271,11 +275,10 @@ fn build_wled_schema() -> DeviceSchema {
             kind: AttributeKind::Integer,
             writable: true,
             display_name: Some("Preset".into()),
-            unit: None,
             min: Some(1.0),
             max: Some(250.0),
             step: Some(1.0),
-            options: None,
+            ..Default::default()
         },
     );
     DeviceSchema {
@@ -571,5 +574,32 @@ async fn run_action(
             }))
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod schema_tests {
+    use super::*;
+
+    /// Every boolean names both of its states.
+    ///
+    /// A boolean attribute is two events, not one: a client given only "on"
+    /// offers one row, and catching the strip going off needs a Not gate
+    /// wrapped round the trigger.
+    #[test]
+    fn every_boolean_names_both_of_its_states() {
+        let schema = build_wled_schema();
+        for (name, attr) in &schema.attributes {
+            if !matches!(attr.kind, AttributeKind::Bool) {
+                continue;
+            }
+            let s = attr
+                .states
+                .as_ref()
+                .unwrap_or_else(|| panic!("{name} is a bool with no state names"));
+            assert_ne!(s.when_true.label, s.when_false.label, "{name}");
+            assert_eq!(s.when_true.transition(), "turns on");
+            assert_eq!(s.when_false.transition(), "turns off");
+        }
     }
 }
