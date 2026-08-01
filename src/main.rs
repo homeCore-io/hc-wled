@@ -1,11 +1,15 @@
 mod bridge;
 mod bridge_info;
 mod config;
+mod discovery;
 mod logging;
 mod wled;
 
 use anyhow::Result;
-use plugin_sdk_rs::types::schema::{AttributeKind, AttributeSchema, DeviceSchema};
+use plugin_sdk_rs::types::schema::{
+    AttributeKind, AttributeSchema, BoolStates, DeviceSchema, StateLabel,
+};
+use plugin_sdk_rs::types::PluginNotice;
 use plugin_sdk_rs::{PluginClient, PluginConfig};
 use serde_json::json;
 use std::collections::HashMap;
@@ -103,6 +107,8 @@ async fn try_start(
         &cfg.logging.log_forward_level,
     );
     let publisher = client.device_publisher();
+    // Conditions for the plugin page, not only the log.
+    let notices = client.notices();
     let (cmd_tx, cmd_rx) = mpsc::channel(256);
 
     // Stash the device list so the management custom_handler closure
@@ -147,6 +153,16 @@ async fn try_start(
             })))
         });
 
+    // Publish the operator-config JSON Schema so the hc-web editor renders a
+    // typed form (rides on the capability manifest).
+    let mgmt = match config::config_schema() {
+        Some(schema) => mgmt.with_config_schema(schema),
+        None => mgmt,
+    };
+    // …and the plugin-authored descriptor the editor renders instead of
+    // guessing a form from the schema. Rides the same manifest.
+    let mgmt = mgmt.with_config_descriptor(config::config_descriptor());
+
     // Start the SDK event loop FIRST so the MQTT eventloop is pumping while
     // we register devices.  Without this, queued publishes block forever once
     // the rumqttc internal buffer (64) fills up.
@@ -167,6 +183,28 @@ async fn try_start(
 
     // Brief yield to let the eventloop connect before we start publishing.
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // An empty device list is the normal state right after install, and until
+    // now it looked identical to a healthy plugin: active, zero devices, no
+    // explanation. Worth saying out loud, with the container caveat, because
+    // mDNS is exactly what a bridge network does not carry.
+    if cfg.devices.is_empty() {
+        notices.raise(
+            PluginNotice::warning(
+                "no_devices_configured",
+                "No WLED devices are configured, so this plugin publishes nothing.",
+            )
+            .with_remedy(
+                "Run the Discover devices action, which browses mDNS for \
+                 _wled._tcp.local. If it finds nothing and homeCore is running in a \
+                 container on a bridge network, that is expected — mDNS is multicast \
+                 and does not cross the bridge. Add each controller by IP under \
+                 Configuration instead.",
+            ),
+        );
+    } else {
+        notices.clear("no_devices_configured");
+    }
 
     // Register all devices via DevicePublisher (PluginClient is consumed).
     let schema = build_wled_schema();
@@ -230,15 +268,17 @@ fn build_wled_schema() -> DeviceSchema {
     let mut attrs = HashMap::new();
     attrs.insert(
         "on".into(),
+        // Both directions named: a boolean attribute is two events, and a
+        // client that only learns "on" needs a Not gate for the other half.
         AttributeSchema {
             kind: AttributeKind::Bool,
             writable: true,
             display_name: Some("Power".into()),
-            unit: None,
-            min: None,
-            max: None,
-            step: None,
-            options: None,
+            states: Some(BoolStates {
+                when_true: StateLabel::verbed("on", "turns on"),
+                when_false: StateLabel::verbed("off", "turns off"),
+            }),
+            ..Default::default()
         },
     );
     attrs.insert(
@@ -251,7 +291,7 @@ fn build_wled_schema() -> DeviceSchema {
             min: Some(0.0),
             max: Some(100.0),
             step: Some(1.0),
-            options: None,
+            ..Default::default()
         },
     );
     attrs.insert(
@@ -260,14 +300,16 @@ fn build_wled_schema() -> DeviceSchema {
             kind: AttributeKind::Integer,
             writable: true,
             display_name: Some("Preset".into()),
-            unit: None,
             min: Some(1.0),
             max: Some(250.0),
             step: Some(1.0),
-            options: None,
+            ..Default::default()
         },
     );
-    DeviceSchema { attributes: attrs }
+    DeviceSchema {
+        attributes: attrs,
+        ..Default::default()
+    }
 }
 
 /// Path of the cross-restart device-id snapshot, sibling to
@@ -295,10 +337,12 @@ fn capabilities_manifest() -> plugin_sdk_rs::types::Capabilities {
                 id: "discover_devices".into(),
                 label: "Discover devices".into(),
                 description: Some(
-                    "Query the WLED-Sync mesh peer list (`/json/nodes`) \
-                     from the first configured device. Returns every WLED \
-                     instance the mesh knows about so you can decide \
-                     which ones to add to `[[devices]]` in config.toml."
+                    "Find WLED devices on the network. Browses mDNS \
+                     (`_wled._tcp.local`) for instances on the local subnet — \
+                     no configuration required — and also pulls the WLED-Sync \
+                     peer list (`/json/nodes`) from any configured or \
+                     mDNS-discovered node. Returns each instance so you can add \
+                     it to `[[devices]]` in config.toml."
                         .into(),
                 ),
                 params: None,
@@ -312,7 +356,10 @@ fn capabilities_manifest() -> plugin_sdk_rs::types::Capabilities {
                 item_key: None,
                 item_operations: None,
                 requires_role: RequiresRole::User,
-                timeout_ms: None,
+                // Probes every seed host concurrently at ~3s each; 20s gives
+                // ample headroom over core's default 5s window so an
+                // unreachable WLED doesn't 504 the discovery.
+                timeout_ms: Some(20_000),
             },
             Action {
                 id: "refresh_effects_palettes".into(),
@@ -397,32 +444,66 @@ async fn run_action(
     use crate::wled::WledClient;
     match action {
         "discover_devices" => {
-            // Build the seed list: every configured device's host +
-            // every entry in [wled].discovery_hosts. The latter
-            // covers VLAN segments where no devices are configured
-            // yet but at least one WLED is reachable.
-            let mut seeds: Vec<String> = devices.iter().map(|d| d.host.clone()).collect();
+            // PRIMARY: mDNS browse for `_wled._tcp.local.` — finds every WLED
+            // on the local subnet with zero configuration. This is what makes
+            // "discover" actually discover; the mesh-peer probe below only ever
+            // learns about hosts adjacent to one you already know.
+            let (mdns_nodes, mut probe_errors) =
+                crate::discovery::mdns_discover(Duration::from_secs(4)).await;
+            let mdns_count = mdns_nodes.len();
+
+            // SEEDS for WLED-Sync mesh-peer enrichment: everything mDNS just
+            // found, plus configured device hosts, plus any explicit
+            // `[wled].discovery_hosts`. The last is an OPTIONAL fallback for
+            // WLEDs on other subnets, since mDNS is link-local and doesn't
+            // route across VLANs — not a requirement for local discovery.
+            let mut seeds: Vec<String> = Vec::new();
+            for n in &mdns_nodes {
+                if let Some(ip) = n.get("ip").and_then(|v| v.as_str()) {
+                    if !ip.is_empty() {
+                        seeds.push(ip.to_string());
+                    }
+                }
+            }
+            for d in devices {
+                if !seeds.iter().any(|s| s == &d.host) {
+                    seeds.push(d.host.clone());
+                }
+            }
             for h in discovery_hosts {
                 if !seeds.iter().any(|s| s == h) {
                     seeds.push(h.clone());
                 }
             }
-            if seeds.is_empty() {
-                return Some(json!({
-                    "status": "error",
-                    "error": "no [[devices]] configured and no [wled].discovery_hosts \
-                             listed — nothing to query for /json/nodes",
-                }));
-            }
 
-            // Query each seed in parallel; merge + dedup peer lists.
+            // Query every seed CONCURRENTLY; merge + dedup peer lists. Serial
+            // probing here (5s/host) used to blow past core's response window
+            // and 504 the whole discovery on one unreachable host.
+            let results = futures_util::future::join_all(seeds.iter().map(|seed| {
+                let seed = seed.clone();
+                async move {
+                    let nodes = WledClient::new(&seed).get_nodes().await;
+                    (seed, nodes)
+                }
+            }))
+            .await;
+
+            // Merge mDNS hits first (they carry `source:"mdns"`), then the
+            // mesh-peer lists, deduping by resolved IP.
             let mut merged: Vec<serde_json::Value> = Vec::new();
             let mut seen_ips: std::collections::HashSet<String> = Default::default();
-            let mut probe_errors: Vec<serde_json::Value> = Vec::new();
-
-            for seed in &seeds {
-                let client = WledClient::new(seed);
-                match client.get_nodes().await {
+            for node in mdns_nodes {
+                let ip = node
+                    .get("ip")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                if ip.is_empty() || seen_ips.insert(ip) {
+                    merged.push(node);
+                }
+            }
+            for (seed, nodes_res) in results {
+                match nodes_res {
                     Ok(nodes) => {
                         let arr = match nodes.get("nodes").and_then(|v| v.as_array()) {
                             Some(a) => a.clone(),
@@ -445,12 +526,17 @@ async fn run_action(
                 }
             }
 
+            let count = merged.len();
             Some(json!({
                 "status": "ok",
                 "discovered": merged,
-                "count": merged.len(),
+                "count": count,
+                "mdns_count": mdns_count,
                 "seeds": seeds,
                 "errors": probe_errors,
+                "message": format!(
+                    "Discovered {count} WLED device(s) — {mdns_count} via mDNS."
+                ),
             }))
         }
         "refresh_effects_palettes" => {
@@ -513,5 +599,32 @@ async fn run_action(
             }))
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod schema_tests {
+    use super::*;
+
+    /// Every boolean names both of its states.
+    ///
+    /// A boolean attribute is two events, not one: a client given only "on"
+    /// offers one row, and catching the strip going off needs a Not gate
+    /// wrapped round the trigger.
+    #[test]
+    fn every_boolean_names_both_of_its_states() {
+        let schema = build_wled_schema();
+        for (name, attr) in &schema.attributes {
+            if !matches!(attr.kind, AttributeKind::Bool) {
+                continue;
+            }
+            let s = attr
+                .states
+                .as_ref()
+                .unwrap_or_else(|| panic!("{name} is a bool with no state names"));
+            assert_ne!(s.when_true.label, s.when_false.label, "{name}");
+            assert_eq!(s.when_true.transition(), "turns on");
+            assert_eq!(s.when_false.transition(), "turns off");
+        }
     }
 }
