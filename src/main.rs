@@ -9,6 +9,7 @@ use anyhow::Result;
 use plugin_sdk_rs::types::schema::{
     AttributeKind, AttributeSchema, BoolStates, DeviceSchema, StateLabel,
 };
+use plugin_sdk_rs::types::PluginNotice;
 use plugin_sdk_rs::{PluginClient, PluginConfig};
 use serde_json::json;
 use std::collections::HashMap;
@@ -106,6 +107,8 @@ async fn try_start(
         &cfg.logging.log_forward_level,
     );
     let publisher = client.device_publisher();
+    // Conditions for the plugin page, not only the log.
+    let notices = client.notices();
     let (cmd_tx, cmd_rx) = mpsc::channel(256);
 
     // Stash the device list so the management custom_handler closure
@@ -180,6 +183,28 @@ async fn try_start(
 
     // Brief yield to let the eventloop connect before we start publishing.
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // An empty device list is the normal state right after install, and until
+    // now it looked identical to a healthy plugin: active, zero devices, no
+    // explanation. Worth saying out loud, with the container caveat, because
+    // mDNS is exactly what a bridge network does not carry.
+    if cfg.devices.is_empty() {
+        notices.raise(
+            PluginNotice::warning(
+                "no_devices_configured",
+                "No WLED devices are configured, so this plugin publishes nothing.",
+            )
+            .with_remedy(
+                "Run the Discover devices action, which browses mDNS for \
+                 _wled._tcp.local. If it finds nothing and homeCore is running in a \
+                 container on a bridge network, that is expected — mDNS is multicast \
+                 and does not cross the bridge. Add each controller by IP under \
+                 Configuration instead.",
+            ),
+        );
+    } else {
+        notices.clear("no_devices_configured");
+    }
 
     // Register all devices via DevicePublisher (PluginClient is consumed).
     let schema = build_wled_schema();
