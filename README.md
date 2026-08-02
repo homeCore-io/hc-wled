@@ -22,9 +22,22 @@ Bridges WLED LED controllers into HomeCore via WebSocket with REST polling fallb
 
 ## Setup
 
-1. Copy `config/config.toml.example` to `config/config.toml`
-2. Add device entries with the WLED controller IP/hostname
-3. Add a `[[plugins]]` entry in `homecore.toml`
+Install it from the web UI — **Plugins → Add** — then open its
+**Configuration** tab and add a device entry per WLED controller, with its IP
+or hostname.
+
+homeCore records the install itself, so there is no `[[plugins]]` block to
+write. It owns the config file too — `config/plugins/plugin.wled.toml` under
+homeCore's home directory — and restarts the plugin when that file changes.
+
+## Notices
+
+Problems are reported as **notices**, shown on the plugin's card in the web
+UI. They are state rather than log lines.
+
+| Code | Means |
+|---|---|
+| `no_devices_configured` | No controllers configured yet, so there is nothing to bridge. Clears when one is added. |
 
 ## Configuration
 
